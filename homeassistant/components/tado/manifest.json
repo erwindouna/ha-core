@@ -3,6 +3,7 @@
   "name": "Tado",
   "codeowners": ["@erwindouna"],
   "config_flow": true,
+  "dependencies": ["application_credentials"],
   "dhcp": [
     {
       "hostname": "tado*"

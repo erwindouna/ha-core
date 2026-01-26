@@ -53,10 +53,13 @@ DATA_COMPONENT: HassKey[ApplicationCredentialsStorageCollection] = HassKey(DOMAI
 CONF_AUTH_DOMAIN = "auth_domain"
 DEFAULT_IMPORT_NAME = "Import from configuration.yaml"
 
+# TODO: reminder; the front has the Application credentials dialog hardcoded. Might need a change there.
 CREATE_FIELDS: VolDictType = {
     vol.Required(CONF_DOMAIN): cv.string,
     vol.Required(CONF_CLIENT_ID): vol.All(cv.string, vol.Strip),
-    vol.Required(CONF_CLIENT_SECRET): vol.All(cv.string, vol.Strip),
+    vol.Required(CONF_CLIENT_SECRET): vol.All(
+        cv.string, vol.Strip
+    ),  # Should be required for auth code flow, only
     vol.Optional(CONF_AUTH_DOMAIN): cv.string,
     vol.Optional(CONF_NAME): cv.string,
 }
@@ -214,6 +217,33 @@ class AuthImplementation(config_entry_oauth2_flow.LocalOAuth2Implementation):
         return self._name or self.client_id
 
 
+class DeviceFlowAuthImplementation(config_entry_oauth2_flow.DeviceFlowImplementation):
+    """Application Credentials device flow implementation."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        auth_domain: str,
+        credential: ClientCredential,
+        authorization_server: AuthorizationServer,
+    ) -> None:
+        """Initialize DeviceFlowAuthImplementation."""
+        super().__init__(
+            hass,
+            auth_domain,
+            credential.client_id,
+            authorization_server.authorize_url,
+            authorization_server.token_url,
+        )
+        self._client_secret = credential.client_secret
+        self._name = credential.name
+
+    @property
+    def name(self) -> str:
+        """Name of the implementation."""
+        return self._name or self.client_id
+
+
 async def _async_provide_implementation(
     hass: HomeAssistant, domain: str
 ) -> list[config_entry_oauth2_flow.AbstractOAuth2Implementation]:
@@ -230,6 +260,18 @@ async def _async_provide_implementation(
             for auth_domain, credential in credentials.items()
         ]
     authorization_server = await platform.async_get_authorization_server(hass)
+
+    # Check if platform uses device flow
+    # TODO: check if we want to enforce here the non-device flow,
+    # over the device flow or if it should be in the docs
+    if hasattr(platform, "async_use_device_flow"):
+        return [
+            DeviceFlowAuthImplementation(
+                hass, auth_domain, credential, authorization_server
+            )
+            for auth_domain, credential in credentials.items()
+        ]
+
     return [
         AuthImplementation(hass, auth_domain, credential, authorization_server)
         for auth_domain, credential in credentials.items()

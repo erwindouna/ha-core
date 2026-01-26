@@ -2,14 +2,20 @@
   "config": {
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
+      "authorize_url_timeout": "[%key:common::config_flow::abort::oauth2_authorize_url_timeout%]",
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "could_not_authenticate": "Could not authenticate with Tado.",
+      "missing_configuration": "[%key:common::config_flow::abort::oauth2_missing_configuration%]",
       "no_homes": "There are no homes linked to this Tado account.",
+      "oauth_error": "[%key:common::config_flow::abort::oauth2_error%]",
+      "oauth_failed": "[%key:common::config_flow::abort::oauth2_failed%]",
+      "oauth_timeout": "[%key:common::config_flow::abort::oauth2_timeout%]",
+      "oauth_unauthorized": "[%key:common::config_flow::abort::oauth2_unauthorized%]",
       "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
       "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
     },
     "progress": {
-      "wait_for_device": "To authenticate, open the following URL and login at Tado:\n{url}\nIf the code is not automatically copied, paste the following code to authorize the integration:\n\n```{code}```\n\n\nThe login attempt will time out after five minutes."
+      "oauth2_device_flow": "[%key:common::config::progress::oauth2_device_flow%]"
     },
     "step": {
       "homekit": {

@@ -37,6 +37,7 @@ APPLICATION_CREDENTIALS = [
     "senz",
     "smartthings",
     "spotify",
+    "tado",
     "tesla_fleet",
     "teslemetry",
     "tibber",

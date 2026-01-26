@@ -88,6 +88,9 @@
       "initiate_flow": {
         "account": "Add account"
       },
+      "progress": {
+        "oauth2_device_flow": "To link your account, visit [{verification_url}]({verification_url}) and enter the following code:\n\n**{user_code}**"
+      },
       "title": {
         "oauth2_pick_implementation": "Pick authentication method",
         "reauth": "Authentication expired for {name}",

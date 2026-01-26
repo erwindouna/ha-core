@@ -20,6 +20,7 @@ import logging
 import secrets
 import time
 from typing import Any, cast
+from urllib.parse import urlencode
 
 from aiohttp import ClientError, ClientResponseError, client, web
 from habluetooth import BluetoothServiceInfoBleak
@@ -343,6 +344,88 @@ class LocalOAuth2ImplementationWithPkce(LocalOAuth2Implementation):
         return encoded.decode("ascii").replace("=", "")
 
 
+class DeviceFlowImplementation(AbstractOAuth2Implementation):
+    """OAuth2 Device Flow implementation."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        domain: str,
+        client_id: str,
+        authorize_url: str,
+        token_url: str,
+    ) -> None:
+        """Initialize device flow implementation."""
+        self.hass = hass
+        self._domain = domain
+        self.client_id = client_id
+        self._authorize_url = authorize_url
+        self._token_url = token_url
+
+    @property
+    def name(self) -> str:
+        """Name of the implementation."""
+        return "Device Flow"
+
+    @property
+    def domain(self) -> str:
+        """Domain providing the implementation."""
+        return self._domain
+
+    # Useful for now, decide later on if needed
+    @property
+    def authorize_url(self) -> str:
+        """Return the authorize URL."""
+        return self._authorize_url
+
+    @property
+    def token_url(self) -> str:
+        """Return the token URL."""
+        return self._token_url
+
+    @property
+    def extra_authorize_data(self) -> dict:
+        """Extra data that needs to be appended to the authorize URL."""
+        return {}
+
+    @property
+    def extra_token_resolve_data(self) -> dict:
+        """Extra data for the token resolve request."""
+        return {}
+
+    # Flow ID is unsed here, but kept for interface compatibility
+    async def async_generate_authorize_url(self, flow_id: str) -> str:
+        """Generate a URL for the user to authorize."""
+        return str(
+            URL(self.authorize_url)
+            .with_query(
+                {
+                    "client_id": self.client_id,
+                }
+            )
+            .update_query(self.extra_authorize_data)
+        )
+
+    # TODO: Implement properly!! Currently just a placeholder
+    async def async_resolve_external_data(self, external_data: Any) -> dict:
+        """Resolve the authorization code to tokens."""
+        request_data: dict = {
+            "grant_type": "authorization_code",
+            "code": external_data["code"],
+            "redirect_uri": external_data["state"]["redirect_uri"],
+        }
+        request_data.update(self.extra_token_resolve_data)
+        return {}
+
+    async def _async_refresh_token(self, token: dict) -> dict:
+        """Refresh tokens."""
+        return {
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "refresh_token": token["refresh_token"],
+        }
+
+
 class AbstractOAuth2FlowHandler(config_entries.ConfigFlow, metaclass=ABCMeta):
     """Handle a config flow."""
 
@@ -413,11 +496,17 @@ class AbstractOAuth2FlowHandler(config_entries.ConfigFlow, metaclass=ABCMeta):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Create an entry for auth."""
+
         # Flow has been triggered by external data
         if user_input is not None:
             self.external_data = user_input
             next_step = "authorize_rejected" if "error" in user_input else "creation"
             return self.async_external_step_done(next_step_id=next_step)
+
+        # Check if this is a device flow implementation
+        # Branch out, if so
+        if isinstance(self.flow_impl, DeviceFlowImplementation):
+            return await self.async_step_device_flow()
 
         try:
             async with asyncio.timeout(OAUTH_AUTHORIZE_URL_TIMEOUT_SEC):
@@ -436,6 +525,120 @@ class AbstractOAuth2FlowHandler(config_entries.ConfigFlow, metaclass=ABCMeta):
             )
 
         return self.async_external_step(step_id="auth", url=url)
+
+    async def async_step_device_flow(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle OAuth2 device flow authorization."""
+        if user_input is not None:
+            # User clicked continue, proceed to polling
+            # I need to test this.
+            return await self.async_step_device_poll()
+
+        # Request device code from authorization endpoint
+        # Need a better type hint here... works for now
+        assert isinstance(self.flow_impl, DeviceFlowImplementation)
+
+        session = async_get_clientsession(self.hass)
+        try:
+            async with asyncio.timeout(OAUTH_AUTHORIZE_URL_TIMEOUT_SEC):
+                response = await session.post(
+                    self.flow_impl.authorize_url,
+                    data={
+                        "client_id": self.flow_impl.client_id,
+                        **self.extra_authorize_data,
+                    },
+                )
+                response.raise_for_status()
+                device_auth_data = await response.json()
+        except TimeoutError as err:
+            _LOGGER.error("Timeout requesting device code: %s", err)
+            return self.async_abort(reason="authorize_url_timeout")
+        except (ClientError, ClientResponseError) as err:
+            _LOGGER.error("Error requesting device code: %s", err)
+            return self.async_abort(reason="oauth_error")
+
+        # Store device flow data for polling
+        self.external_data = device_auth_data
+
+        # The verification_uri_complete is optional, according to the standard
+        # Build our own
+        return self.async_show_progress(
+            step_id="device_flow",
+            progress_action="wait_for_device",
+            description_placeholders={
+                "verification_uri": f"{device_auth_data['verification_uri']}?{urlencode({'user_code': device_auth_data['user_code']})}",
+                "user_code": device_auth_data["user_code"],
+            },
+        )
+
+    async def async_step_device_poll(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Poll for device authorization completion."""
+        assert isinstance(self.flow_impl, DeviceFlowImplementation)
+
+        device_code = self.external_data["device_code"]
+        interval = self.external_data.get("interval", 5)
+        expires_in = self.external_data.get("expires_in", 600)
+
+        session = async_get_clientsession(self.hass)
+        token_url = self.flow_impl.token_url
+
+        # Poll the token endpoint
+        start_time = time.time()
+        while time.time() - start_time < expires_in:
+            try:
+                async with asyncio.timeout(OAUTH_TOKEN_TIMEOUT_SEC):
+                    response = await session.post(
+                        token_url,
+                        data={
+                            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                            "device_code": device_code,
+                            "client_id": self.flow_impl.client_id,
+                        },
+                    )
+
+                    if response.status == HTTPStatus.OK:
+                        token = await response.json()
+                        self.logger.info("Successfully authenticated via device flow")
+                        return await self.async_oauth_create_entry(
+                            {
+                                "auth_implementation": self.flow_impl.domain,
+                                "token": token,
+                            }
+                        )
+
+                    # Check for pending authorization or slow down
+                    error_data = await response.json()
+                    error = error_data.get("error")
+
+                    if error == "authorization_pending":
+                        # Still waiting for user authorization
+                        await asyncio.sleep(interval)
+                        continue
+                    if error == "slow_down":
+                        # Slow down polling
+                        interval += 5
+                        await asyncio.sleep(interval)
+                        continue
+                    if error in ("access_denied", "expired_token"):
+                        # User denied or token expired
+                        return self.async_abort(reason=error)
+
+                    # Other error
+                    _LOGGER.error("Device flow error: %s", error)
+                    return self.async_abort(reason="oauth_error")
+
+            except TimeoutError:
+                _LOGGER.error("Timeout polling for device authorization")
+                return self.async_abort(reason="oauth_timeout")
+            except (ClientError, ClientResponseError) as err:
+                _LOGGER.error("Error polling for device authorization: %s", err)
+                return self.async_abort(reason="oauth_error")
+
+        # Expired
+        return self.async_abort(reason="expired_token")
 
     async def async_step_creation(
         self, user_input: dict[str, Any] | None = None
