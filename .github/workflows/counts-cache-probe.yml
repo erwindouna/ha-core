@@ -1,6 +1,8 @@
 # Temporary probe for the fork only: does the pytest counts cache survive a
-# requirements change with the extra restore-key? Job "before" plays the last
-# dev run, job "after" a PR that changed requirements (other python_cache_key).
+# requirements change once python_cache_key is dropped from the keys? Job
+# "before" plays the last dev run, job "after" a PR that changed requirements.
+# The "old" lookup uses the current ci.yaml keys (with the requirements), the
+# "new" steps mirror the PR's ci.yaml exactly.
 name: counts cache probe
 
 "on":
@@ -58,22 +60,23 @@ jobs:
           key: probe-counts-${{ env.PROBE_ID }}-reqs-a-restore-sentinel
           restore-keys: |
             probe-counts-${{ env.PROBE_ID }}-reqs-a-
-      - name: New restore-keys (with fallback)
+      - name: New keys (without requirements)
         id: new
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: pytest_test_counts.json
-          key: probe-counts-${{ env.PROBE_ID }}-reqs-a-restore-sentinel
+          key: >-
+            probe-counts-${{ env.PROBE_ID }}-${{ runner.os }}-${{ runner.arch }}-${{
+            steps.python.outputs.python-version }}-restore-sentinel
           restore-keys: |
-            probe-counts-${{ env.PROBE_ID }}-reqs-a-
-            probe-counts-${{ env.PROBE_ID }}-
+            probe-counts-${{ env.PROBE_ID }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-
       - name: Cache lookups
         env:
           OLD_KEY: ${{ steps.old.outputs.cache-matched-key }}
           NEW_KEY: ${{ steps.new.outputs.cache-matched-key }}
         run: |
           echo "old restore-keys matched: '${OLD_KEY}'"
-          echo "new restore-keys matched: '${NEW_KEY}'"
+          echo "new keys matched: '${NEW_KEY}'"
       - name: Run split_tests.py
         run: |
           . venv/bin/activate
@@ -82,10 +85,18 @@ jobs:
         id: hash
         run: echo "hash=$(sha256sum pytest_test_counts.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - name: Save pytest test counts cache
+        if: >-
+          !endsWith(
+            steps.new.outputs.cache-matched-key,
+            steps.hash.outputs.hash
+          )
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: pytest_test_counts.json
-          key: probe-counts-${{ env.PROBE_ID }}-reqs-a-${{ steps.hash.outputs.hash }}
+          key: >-
+            probe-counts-${{ env.PROBE_ID }}-${{ runner.os }}-${{ runner.arch }}-${{
+            steps.python.outputs.python-version }}-${{
+            steps.hash.outputs.hash }}
 
   after:
     name: Split with requirements b
@@ -124,22 +135,23 @@ jobs:
           key: probe-counts-${{ env.PROBE_ID }}-reqs-b-restore-sentinel
           restore-keys: |
             probe-counts-${{ env.PROBE_ID }}-reqs-b-
-      - name: New restore-keys (with fallback)
+      - name: New keys (without requirements)
         id: new
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: pytest_test_counts.json
-          key: probe-counts-${{ env.PROBE_ID }}-reqs-b-restore-sentinel
+          key: >-
+            probe-counts-${{ env.PROBE_ID }}-${{ runner.os }}-${{ runner.arch }}-${{
+            steps.python.outputs.python-version }}-restore-sentinel
           restore-keys: |
-            probe-counts-${{ env.PROBE_ID }}-reqs-b-
-            probe-counts-${{ env.PROBE_ID }}-
+            probe-counts-${{ env.PROBE_ID }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-
       - name: Cache lookups
         env:
           OLD_KEY: ${{ steps.old.outputs.cache-matched-key }}
           NEW_KEY: ${{ steps.new.outputs.cache-matched-key }}
         run: |
           echo "old restore-keys matched: '${OLD_KEY}'"
-          echo "new restore-keys matched: '${NEW_KEY}'"
+          echo "new keys matched: '${NEW_KEY}'"
       - name: Run split_tests.py
         run: |
           . venv/bin/activate
@@ -148,7 +160,15 @@ jobs:
         id: hash
         run: echo "hash=$(sha256sum pytest_test_counts.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - name: Save pytest test counts cache
+        if: >-
+          !endsWith(
+            steps.new.outputs.cache-matched-key,
+            steps.hash.outputs.hash
+          )
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: pytest_test_counts.json
-          key: probe-counts-${{ env.PROBE_ID }}-reqs-b-${{ steps.hash.outputs.hash }}
+          key: >-
+            probe-counts-${{ env.PROBE_ID }}-${{ runner.os }}-${{ runner.arch }}-${{
+            steps.python.outputs.python-version }}-${{
+            steps.hash.outputs.hash }}
