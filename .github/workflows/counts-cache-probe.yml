@@ -1,0 +1,154 @@
+# Temporary probe for the fork only: does the pytest counts cache survive a
+# requirements change with the extra restore-key? Job "before" plays the last
+# dev run, job "after" a PR that changed requirements (other python_cache_key).
+name: counts cache probe
+
+"on":
+  push:
+    branches:
+      - ci-counts-cache-probe
+
+permissions:
+  contents: read
+
+concurrency:
+  group: counts-cache-probe
+  cancel-in-progress: true
+
+env:
+  UV_CACHE_DIR: /tmp/uv-cache
+  APT_CACHE_VERSION: 1
+  HASS_CI: 1
+  PROBE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  before:
+    name: Split with requirements a
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install additional OS dependencies
+        uses: $/.github/actions/cache-apt-packages
+        with:
+          packages: >-
+            bluez
+            ffmpeg
+            libturbojpeg
+          version: ${{ env.APT_CACHE_VERSION }}
+          execute_install_scripts: true
+      - name: Set up Python and restore venv
+        id: python
+        uses: $/.github/actions/restore-or-build-venv
+        with:
+          uv-version: "0.12.17"
+          python-version: "3.14.5"
+          python-cache-key: xdist-probe
+          uv-cache-dir: ${{ env.UV_CACHE_DIR }}
+          apt-cache-version: ${{ env.APT_CACHE_VERSION }}
+      - name: Old restore-keys only (current ci.yaml)
+        id: old
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pytest_test_counts.json
+          lookup-only: true
+          key: probe-counts-${{ env.PROBE_ID }}-reqs-a-restore-sentinel
+          restore-keys: |
+            probe-counts-${{ env.PROBE_ID }}-reqs-a-
+      - name: New restore-keys (with fallback)
+        id: new
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pytest_test_counts.json
+          key: probe-counts-${{ env.PROBE_ID }}-reqs-a-restore-sentinel
+          restore-keys: |
+            probe-counts-${{ env.PROBE_ID }}-reqs-a-
+            probe-counts-${{ env.PROBE_ID }}-
+      - name: Cache lookups
+        env:
+          OLD_KEY: ${{ steps.old.outputs.cache-matched-key }}
+          NEW_KEY: ${{ steps.new.outputs.cache-matched-key }}
+        run: |
+          echo "old restore-keys matched: '${OLD_KEY}'"
+          echo "new restore-keys matched: '${NEW_KEY}'"
+      - name: Run split_tests.py
+        run: |
+          . venv/bin/activate
+          time python -m script.split_tests --cache pytest_test_counts.json 10 tests | tail -12
+      - name: Hash pytest test counts cache
+        id: hash
+        run: echo "hash=$(sha256sum pytest_test_counts.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Save pytest test counts cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pytest_test_counts.json
+          key: probe-counts-${{ env.PROBE_ID }}-reqs-a-${{ steps.hash.outputs.hash }}
+
+  after:
+    name: Split with requirements b
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: before
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install additional OS dependencies
+        uses: $/.github/actions/cache-apt-packages
+        with:
+          packages: >-
+            bluez
+            ffmpeg
+            libturbojpeg
+          version: ${{ env.APT_CACHE_VERSION }}
+          execute_install_scripts: true
+      - name: Set up Python and restore venv
+        id: python
+        uses: $/.github/actions/restore-or-build-venv
+        with:
+          uv-version: "0.12.17"
+          python-version: "3.14.5"
+          python-cache-key: xdist-probe
+          uv-cache-dir: ${{ env.UV_CACHE_DIR }}
+          apt-cache-version: ${{ env.APT_CACHE_VERSION }}
+      - name: Old restore-keys only (current ci.yaml)
+        id: old
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pytest_test_counts.json
+          lookup-only: true
+          key: probe-counts-${{ env.PROBE_ID }}-reqs-b-restore-sentinel
+          restore-keys: |
+            probe-counts-${{ env.PROBE_ID }}-reqs-b-
+      - name: New restore-keys (with fallback)
+        id: new
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pytest_test_counts.json
+          key: probe-counts-${{ env.PROBE_ID }}-reqs-b-restore-sentinel
+          restore-keys: |
+            probe-counts-${{ env.PROBE_ID }}-reqs-b-
+            probe-counts-${{ env.PROBE_ID }}-
+      - name: Cache lookups
+        env:
+          OLD_KEY: ${{ steps.old.outputs.cache-matched-key }}
+          NEW_KEY: ${{ steps.new.outputs.cache-matched-key }}
+        run: |
+          echo "old restore-keys matched: '${OLD_KEY}'"
+          echo "new restore-keys matched: '${NEW_KEY}'"
+      - name: Run split_tests.py
+        run: |
+          . venv/bin/activate
+          time python -m script.split_tests --cache pytest_test_counts.json 10 tests | tail -12
+      - name: Hash pytest test counts cache
+        id: hash
+        run: echo "hash=$(sha256sum pytest_test_counts.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Save pytest test counts cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pytest_test_counts.json
+          key: probe-counts-${{ env.PROBE_ID }}-reqs-b-${{ steps.hash.outputs.hash }}
